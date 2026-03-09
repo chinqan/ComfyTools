@@ -268,7 +268,7 @@ APP_CSS = """
 # Main app
 # ──────────────────────────────────────────────
 
-DEFAULT_FOLDER = "/Users/chinqan/Downloads/照片修改"
+DEFAULT_FOLDER = "/Users/chinqan-mac/Downloads/照片修改"
 
 
 def build_app():
@@ -435,12 +435,13 @@ def build_app():
                         title_txt = gr.Markdown("#### 🔎 詳情")
 
                         detail_image = gr.Image(
-                            show_label=False, height=200, interactive=False,buttons=["download", compareA, compareB]
+                            show_label=False, height=300, interactive=False,buttons=["download", compareA, compareB]
                         )
-                        detail_video = gr.Video(show_label=False, height=200, visible=False)
+                        detail_video = gr.Video(show_label=False, height=300, visible=False)
 
                         with gr.Row():
                             fav_btn = gr.Button("⭐", variant="secondary", size="sm", scale=1, min_width=0)
+                            del_btn = gr.Button("🗑️ 刪除", variant="stop", size="sm", scale=1, min_width=0)
                             cmp_a_btn = gr.Button("🔍A", variant="secondary", size="sm", scale=1, min_width=0)
                             cmp_b_btn = gr.Button("🔍B", variant="secondary", size="sm", scale=1, min_width=0)
 
@@ -459,7 +460,7 @@ def build_app():
                         gallery = gr.Gallery(
                             label="媒體庫",
                             columns=4,
-                            height=820,
+                            height=1050,
                             object_fit="cover",
                             allow_preview=True,
                             show_label=False,
@@ -474,8 +475,8 @@ def build_app():
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=1, min_width=270, elem_classes="sidebar"):
                         fav_title_txt = gr.Markdown("#### 🔎 詳情")
-                        fav_detail_image = gr.Image(show_label=False, height=200, interactive=False)
-                        fav_detail_video = gr.Video(show_label=False, height=200, visible=False)
+                        fav_detail_image = gr.Image(show_label=False, height=300, interactive=False)
+                        fav_detail_video = gr.Video(show_label=False, height=300, visible=False)
                         with gr.Row():
                             fav_fav_btn = gr.Button("💛 取消收藏", variant="secondary", size="sm")
                             fav_dl_btn = gr.DownloadButton("⬇️ 下載", variant="secondary", size="sm")
@@ -537,6 +538,39 @@ def build_app():
         folder_input.submit(refresh_gallery, _ri, _ro)
         filter_radio.change(refresh_gallery, _ri, _ro)
         search_box.submit(refresh_gallery, _ri, _ro)
+
+        # Delete file
+        js_confirm_delete = """
+        function(folder, filter_type, search) {
+            if (!confirm("確定要在磁碟中永久刪除這個檔案嗎？\\n(注意：此操作無法還原)")) {
+                return ["CANCEL", filter_type, search];
+            }
+            return [folder, filter_type, search];
+        }
+        """
+
+        def on_delete_file(folder, filter_type, search):
+            if folder == "CANCEL":
+                return tuple(gr.update() for _ in range(len(_ro)))
+            
+            path = _state["selected_path"]
+            if path and Path(path).exists():
+                try:
+                    Path(path).unlink()
+                    _state["selected_path"] = ""
+                except Exception as e:
+                    print(f"Delete file failed: {e}")
+            else:
+                return tuple(gr.update() for _ in range(len(_ro)))
+            
+            return refresh_gallery(folder, filter_type, search)
+
+        del_btn.click(
+            on_delete_file,
+            inputs=_ri,
+            outputs=_ro,
+            js=js_confirm_delete
+        )
 
         # Gallery → detail
         gallery.select(on_gallery_select, outputs=_do)
