@@ -469,7 +469,7 @@ def build_app():
                             columns=4,
                             height=1050,
                             object_fit="cover",
-                            allow_preview=True,
+                            allow_preview=False,
                             show_label=False,
                             elem_id="main-gallery",
                         )
@@ -498,7 +498,7 @@ def build_app():
                             columns=4,
                             height=820,
                             object_fit="cover",
-                            allow_preview=True,
+                            allow_preview=False,
                             show_label=False,
                             elem_id="fav-gallery",
                         )
@@ -601,7 +601,110 @@ def build_app():
         cmp_btn.click(on_compare, [cmp_select_a, cmp_select_b],
                       [cmp_slider, cmp_meta_a, cmp_meta_b])
 
-        demo.load(lambda: _fav_gallery(), outputs=[fav_gallery])
+        gallery_js = """
+        function() {
+            // Document-level double-click listener for fullscreen preview
+            document.addEventListener('dblclick', function(e) {
+                var thumb = e.target.closest('.thumbnail-item');
+                if (thumb) {
+                    var img = thumb.querySelector('img');
+                    var vid = thumb.querySelector('video');
+                    var url = "";
+                    var is_vid = false;
+                    var captionText = "";
+                    
+                    if (vid) {
+                        var srcEl = vid.querySelector('source');
+                        url = srcEl ? srcEl.src : vid.src;
+                        is_vid = true;
+                    } else if (img) {
+                        url = img.src;
+                    }
+                    
+                    var captionEl = thumb.querySelector('div:last-child');
+                    if (captionEl) {
+                        captionText = captionEl.textContent || captionEl.innerText;
+                    }
+                    
+                    if (url) {
+                        // Prevent default double click behavior like text selection
+                        e.preventDefault();
+                        
+                        // Create fullscreen overlay
+                        var overlay = document.createElement('div');
+                        overlay.id = 'custom-fullscreen-overlay';
+                        overlay.style.position = 'fixed';
+                        overlay.style.top = '0';
+                        overlay.style.left = '0';
+                        overlay.style.width = '100vw';
+                        overlay.style.height = '100vh';
+                        overlay.style.backgroundColor = 'rgba(0,0,0,0.85)';
+                        overlay.style.zIndex = '99999';
+                        overlay.style.display = 'flex';
+                        overlay.style.justifyContent = 'center';
+                        overlay.style.alignItems = 'center';
+                        overlay.style.cursor = 'zoom-out';
+                        
+                        var media;
+                        if (is_vid) {
+                            media = document.createElement('video');
+                            media.src = url;
+                            media.controls = true;
+                            media.autoplay = true;
+                            media.style.maxWidth = '90%';
+                            media.style.maxHeight = '90%';
+                        } else {
+                            media = document.createElement('img');
+                            media.src = url.split('?')[0];
+                            media.style.maxWidth = '90%';
+                            media.style.maxHeight = '90%';
+                            media.style.objectFit = 'contain';
+                        }
+                        
+                        overlay.appendChild(media);
+                        
+                        if (captionText) {
+                            var label = document.createElement('div');
+                            label.textContent = captionText;
+                            label.style.position = 'absolute';
+                            label.style.bottom = '40px';
+                            label.style.left = '50%';
+                            label.style.transform = 'translateX(-50%)';
+                            label.style.color = '#fff';
+                            label.style.backgroundColor = 'rgba(0,0,0,0.6)';
+                            label.style.padding = '8px 16px';
+                            label.style.borderRadius = '20px';
+                            label.style.fontSize = '14px';
+                            label.style.fontFamily = 'sans-serif';
+                            label.style.pointerEvents = 'none';
+                            label.style.zIndex = '100000';
+                            overlay.appendChild(label);
+                        }
+                        
+                        overlay.onclick = function(evt) {
+                            if (document.body.contains(overlay)) {
+                                document.body.removeChild(overlay);
+                            }
+                        };
+                        
+                        var escHandler = function(evt) {
+                            if (evt.key === 'Escape') {
+                                if (document.body.contains(overlay)) {
+                                    document.body.removeChild(overlay);
+                                }
+                                document.removeEventListener('keydown', escHandler);
+                            }
+                        };
+                        document.addEventListener('keydown', escHandler);
+                        
+                        document.body.appendChild(overlay);
+                    }
+                }
+            });
+        }
+        """
+
+        demo.load(lambda: _fav_gallery(), outputs=[fav_gallery], js=gallery_js)
 
     return demo, APP_CSS
 
