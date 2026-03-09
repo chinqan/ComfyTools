@@ -33,11 +33,11 @@ def pick_folder() -> str:
     Returns the chosen POSIX path, or empty string if cancelled.
     """
     script = (
-        'tell application "Finder"\\n'
-        '    activate\\n'
-        'end tell\\n'
-        'set chosen to choose folder with prompt "選擇 ComfyUI Output 資料夾"\\n'
-        'POSIX path of chosen'
+        'tell application "Finder"\n'
+        '    activate\n'
+        '    set chosen to choose folder with prompt "選擇 ComfyUI Output 資料夾"\n'
+        '    return POSIX path of chosen\n'
+        'end tell'
     )
     try:
         import subprocess
@@ -269,8 +269,8 @@ APP_CSS = """
 # Main app
 # ──────────────────────────────────────────────
 
-# DEFAULT_FOLDER = "/Users/chinqan-mac/Downloads/照片修改"
-DEFAULT_FOLDER = "/home/opo_admin/ComfyUI/output"
+DEFAULT_FOLDER = "/Users/chinqan/Downloads/照片修改"
+# DEFAULT_FOLDER = "/home/opo_admin/ComfyUI/output"
 
 
 def build_app():
