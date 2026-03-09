@@ -28,29 +28,54 @@ from utils.metadata import extract_metadata, get_prompt_summary
 
 def pick_folder() -> str:
     """
-    Open the macOS native folder chooser via osascript.
-    Works safely from Gradio background threads (no AppKit main-thread requirement).
-    Returns the chosen POSIX path, or empty string if cancelled.
+    Open the native folder chooser dialog.
+    Supports macOS (osascript), Windows/Linux (tkinter), and Linux (zenity fallback).
     """
-    script = (
-        'tell application "Finder"\n'
-        '    activate\n'
-        'end tell\n'
-        'set chosen to choose folder with prompt "選擇 ComfyUI Output 資料夾"\n'
-        'POSIX path of chosen'
-    )
-    try:
-        result = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True, text=True, timeout=120
+    import sys
+    if sys.platform == "darwin":
+        script = (
+            'tell application "Finder"\\n'
+            '    activate\\n'
+            'end tell\\n'
+            'set chosen to choose folder with prompt "選擇 ComfyUI Output 資料夾"\\n'
+            'POSIX path of chosen'
         )
-        path = result.stdout.strip()
-        # Remove trailing slash that AppleScript sometimes adds
-        return path.rstrip("/") if path else ""
-    except subprocess.TimeoutExpired:
-        return ""
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True, text=True, timeout=120
+            )
+            path = result.stdout.strip()
+            return path.rstrip("/") if path else ""
+        except Exception:
+            return ""
+
+    # Windows / Linux primary attempt via Tkinter
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes('-topmost', 1)
+        folder = filedialog.askdirectory(title="選擇 ComfyUI Output 資料夾")
+        root.destroy()
+        return folder if folder else ""
     except Exception:
-        return ""
+        pass
+
+    # Linux fallback via Zenity if Tkinter fails
+    if sys.platform.startswith("linux"):
+        try:
+            result = subprocess.run(
+                ["zenity", "--file-selection", "--directory", "--title=選擇 ComfyUI Output 資料夾"],
+                capture_output=True, text=True, timeout=120
+            )
+            path = result.stdout.strip()
+            return path if path else ""
+        except Exception:
+            return ""
+
+    return ""
 
 
 # ──────────────────────────────────────────────
