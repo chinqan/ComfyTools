@@ -28,63 +28,30 @@ from utils.metadata import extract_metadata, get_prompt_summary
 
 def pick_folder() -> str:
     """
-    Open the native folder chooser dialog.
-    Supports macOS (osascript), Linux (zenity/tkinter), and Windows (tkinter).
-    Works safely from Gradio background threads.
+    Open the macOS native folder chooser via osascript.
+    Works safely from Gradio background threads (no AppKit main-thread requirement).
+    Returns the chosen POSIX path, or empty string if cancelled.
     """
-    import sys
-    import concurrent.futures
-
-    if sys.platform == "darwin":
-        script = (
-            'tell application "Finder"\\n'
-            '    activate\\n'
-            'end tell\\n'
-            'set chosen to choose folder with prompt "選擇 ComfyUI Output 資料夾"\\n'
-            'POSIX path of chosen'
-        )
-        try:
-            result = subprocess.run(
-                ["osascript", "-e", script],
-                capture_output=True, text=True, timeout=120
-            )
-            path = result.stdout.strip()
-            return path.rstrip("/") if path else ""
-        except Exception as e:
-            print("macOS folder picker error:", e)
-            return ""
-
-    if sys.platform.startswith("linux"):
-        # Primary for Ubuntu/Linux: Zenity (usually installed and safer for threads)
-        try:
-            result = subprocess.run(
-                ["zenity", "--file-selection", "--directory", "--title=選擇 ComfyUI Output 資料夾"],
-                capture_output=True, text=True, timeout=120
-            )
-            path = result.stdout.strip()
-            if path:
-                return path
-        except Exception:
-            pass
-
-    # Windows (or Linux fallback) via Tkinter
-    # Run in a separate process to avoid breaking Gradio's threads
-    code = (
-        "import tkinter as tk, sys;"
-        "from tkinter import filedialog;"
-        "root = tk.Tk();"
-        "root.withdraw();"
-        "root.wm_attributes('-topmost', 1);"
-        "folder = filedialog.askdirectory(title='選擇 ComfyUI Output 資料夾');"
-        "print(folder if folder else '');"
+    script = (
+        'tell application "Finder"\\n'
+        '    activate\\n'
+        'end tell\\n'
+        'set chosen to choose folder with prompt "選擇 ComfyUI Output 資料夾"\\n'
+        'POSIX path of chosen'
     )
     try:
-        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
-        return result.stdout.strip()
-    except Exception as e:
-        print("Tkinter folder picker error:", e)
-    
-    return ""
+        import subprocess
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=120
+        )
+        path = result.stdout.strip()
+        # Remove trailing slash that AppleScript sometimes adds
+        return path.rstrip("/") if path else ""
+    except subprocess.TimeoutExpired:
+        return ""
+    except Exception:
+        return ""
 
 
 # ──────────────────────────────────────────────
@@ -565,9 +532,6 @@ def build_app():
 
         # ── Events ──────────────────────────────────
 
-        # Folder picker
-        pick_btn.click(fn=do_pick_folder, outputs=[folder_input])
-
         # Gallery → detail outputs needed for refresh reset
         _do = [detail_meta, detail_prompt, fav_btn, detail_image, detail_video, title_txt]
 
@@ -611,6 +575,9 @@ def build_app():
             outputs=_ro,
             js=js_confirm_delete
         )
+
+        # Folder picker
+        pick_btn.click(fn=do_pick_folder, outputs=[folder_input])
 
         # Gallery → detail
         gallery.select(on_gallery_select, outputs=_do)
