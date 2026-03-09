@@ -29,9 +29,12 @@ from utils.metadata import extract_metadata, get_prompt_summary
 def pick_folder() -> str:
     """
     Open the native folder chooser dialog.
-    Supports macOS (osascript), Windows/Linux (tkinter), and Linux (zenity fallback).
+    Supports macOS (osascript), Linux (zenity/tkinter), and Windows (tkinter).
+    Works safely from Gradio background threads.
     """
     import sys
+    import concurrent.futures
+
     if sys.platform == "darwin":
         script = (
             'tell application "Finder"\\n'
@@ -47,34 +50,40 @@ def pick_folder() -> str:
             )
             path = result.stdout.strip()
             return path.rstrip("/") if path else ""
-        except Exception:
+        except Exception as e:
+            print("macOS folder picker error:", e)
             return ""
 
-    # Windows / Linux primary attempt via Tkinter
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes('-topmost', 1)
-        folder = filedialog.askdirectory(title="選擇 ComfyUI Output 資料夾")
-        root.destroy()
-        return folder if folder else ""
-    except Exception:
-        pass
-
-    # Linux fallback via Zenity if Tkinter fails
     if sys.platform.startswith("linux"):
+        # Primary for Ubuntu/Linux: Zenity (usually installed and safer for threads)
         try:
             result = subprocess.run(
                 ["zenity", "--file-selection", "--directory", "--title=選擇 ComfyUI Output 資料夾"],
                 capture_output=True, text=True, timeout=120
             )
             path = result.stdout.strip()
-            return path if path else ""
+            if path:
+                return path
         except Exception:
-            return ""
+            pass
 
+    # Windows (or Linux fallback) via Tkinter
+    # Run in a separate process to avoid breaking Gradio's threads
+    code = (
+        "import tkinter as tk, sys;"
+        "from tkinter import filedialog;"
+        "root = tk.Tk();"
+        "root.withdraw();"
+        "root.wm_attributes('-topmost', 1);"
+        "folder = filedialog.askdirectory(title='選擇 ComfyUI Output 資料夾');"
+        "print(folder if folder else '');"
+    )
+    try:
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+        return result.stdout.strip()
+    except Exception as e:
+        print("Tkinter folder picker error:", e)
+    
     return ""
 
 
