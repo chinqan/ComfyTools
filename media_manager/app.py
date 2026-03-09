@@ -294,9 +294,11 @@ def build_app():
         gallery_update = gr.Gallery(value=items, selected_index=None)
         select_a_update = gr.update(choices=choices, value=None)
         select_b_update = gr.update(choices=choices, value=None)
+        thumb_a_update = gr.update(value=None)
+        thumb_b_update = gr.update(value=None)
         
         # Return them along with cleared detail view values
-        return (gallery_update, select_a_update, select_b_update) + _detail_view("")
+        return (gallery_update, select_a_update, select_b_update, thumb_a_update, thumb_b_update) + _detail_view("")
 
     def _detail_view(path: str):
         if not path:
@@ -377,13 +379,14 @@ def build_app():
         comfy = extract_metadata(path).get("comfyui", {})
         return json.dumps(comfy, ensure_ascii=False, indent=2) if comfy else "（沒有 ComfyUI JSON 資料）"
 
-    def on_set_cmp(slot: str):
-        """Return the currently selected image name to fill comparison dropdown A or B."""
+    def on_set_cmp_target(slot_name):
+        """Return the currently selected image name and path to fill comparison dropdown and icon."""
         path = _state["selected_path"]
         if not path:
-            return gr.update()
+            return gr.update(), gr.update()
         name = Path(path).name
-        return gr.update(value=name)
+        # Keep the slot_name text (e.g. "🔍 比對 A") rather than replacing it with `name`
+        return gr.update(value=name), gr.update(value=slot_name, icon=path)
 
     # ── UI ──────────────────────────────────────
 
@@ -442,8 +445,10 @@ def build_app():
                         with gr.Row():
                             fav_btn = gr.Button("⭐", variant="secondary", size="sm", scale=1, min_width=0)
                             del_btn = gr.Button("🗑️ 刪除", variant="stop", size="sm", scale=1, min_width=0)
-                            cmp_a_btn = gr.Button("🔍A", variant="secondary", size="sm", scale=1, min_width=0)
-                            cmp_b_btn = gr.Button("🔍B", variant="secondary", size="sm", scale=1, min_width=0)
+
+                        with gr.Row():
+                            cmp_a_btn = gr.Button("🔍 比對 A", variant="secondary", size="lg", scale=1, min_width=0)
+                            cmp_b_btn = gr.Button("🔍 比對 B", variant="secondary", size="lg", scale=1, min_width=0)
 
                         with gr.Accordion("📋 元資料", open=True):
                             detail_meta = gr.Markdown(elem_classes="meta-panel")
@@ -533,7 +538,7 @@ def build_app():
 
         # Refresh
         _ri = [folder_input, filter_radio, search_box]
-        _ro = [gallery, cmp_select_a, cmp_select_b] + _do
+        _ro = [gallery, cmp_select_a, cmp_select_b, cmp_a_btn, cmp_b_btn] + _do
         refresh_btn.click(refresh_gallery, _ri, _ro)
         folder_input.submit(refresh_gallery, _ri, _ro)
         filter_radio.change(refresh_gallery, _ri, _ro)
@@ -579,11 +584,11 @@ def build_app():
         json_view_btn.click(on_json_view, outputs=[json_display])
 
         # Compare shortcut buttons from Browse tab
-        cmp_a_btn.click(lambda: on_set_cmp("a"), outputs=[cmp_select_a])
-        cmp_b_btn.click(lambda: on_set_cmp("b"), outputs=[cmp_select_b])
+        cmp_a_btn.click(lambda: on_set_cmp_target("🔍 比對 A"), outputs=[cmp_select_a, cmp_a_btn])
+        cmp_b_btn.click(lambda: on_set_cmp_target("🔍 比對 B"), outputs=[cmp_select_b, cmp_b_btn])
         
-        compareA.click(lambda: on_set_cmp("a"), outputs=[cmp_select_a])
-        compareB.click(lambda: on_set_cmp("b"), outputs=[cmp_select_b])
+        compareA.click(lambda: on_set_cmp_target("🔍 比對 A"), outputs=[cmp_select_a, cmp_a_btn])
+        compareB.click(lambda: on_set_cmp_target("🔍 比對 B"), outputs=[cmp_select_b, cmp_b_btn])
         # Favorites tab
         _fo = [fav_detail_meta, fav_detail_prompt, fav_fav_btn, fav_detail_image, fav_detail_video, fav_title_txt]
         fav_gallery.select(on_fav_gallery_select, outputs=_fo)
