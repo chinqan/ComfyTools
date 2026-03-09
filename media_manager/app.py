@@ -268,7 +268,8 @@ APP_CSS = """
 # Main app
 # ──────────────────────────────────────────────
 
-DEFAULT_FOLDER = "/Users/chinqan-mac/Downloads/照片修改"
+# DEFAULT_FOLDER = "/Users/chinqan-mac/Downloads/照片修改"
+DEFAULT_FOLDER = "/home/opo_admin/ComfyUI/output"
 
 
 def build_app():
