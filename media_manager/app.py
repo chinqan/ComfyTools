@@ -19,7 +19,7 @@ import gradio as gr
 
 from utils.file_scanner import scan_folder
 from utils.favorites import load_favorites, toggle_favorite, is_favorite, save_favorites
-from utils.metadata import extract_metadata, get_prompt_summary
+from utils.metadata import extract_metadata, get_prompt_summary, get_prompt_text_quick
 
 
 # ──────────────────────────────────────────────
@@ -98,8 +98,13 @@ def _build_html_gallery(files, selected_set, type_prefix):
         safe_path = html.escape(str(p))
         safe_name = html.escape(str(name))
             
+        # Prompt text for overlay (PNG only, cached)
+        prompt_text = get_prompt_text_quick(p) if p.lower().endswith(".png") else ""
+        safe_prompt = html.escape(prompt_text).replace("\n", "&#10;") if prompt_text else ""
+        prompt_attr = f' data-prompt="{safe_prompt}"' if safe_prompt else ""
+
         item_html = f"""
-        <div class="cb-item {sel_class}" data-path="{safe_path}" data-type="{type_prefix}"{fav_attr}>
+        <div class="cb-item {sel_class}" data-path="{safe_path}" data-type="{type_prefix}"{fav_attr}{prompt_attr}>
             <div class="cb-img-wrap">
                 {media_html}
                 {fav_badge}
@@ -653,12 +658,19 @@ def build_app():
         _state["fav_selected_batch"] = set()
         return f"**已選取: {len(_state['fav_selected_batch'])} 張**"
 
-    def on_json_view():
+    def on_prompt_json_view():
         path = _state["selected_path"]
         if not path:
             return "（尚未選擇圖片）"
-        comfy = extract_metadata(path).get("comfyui", {})
-        return json.dumps(comfy, ensure_ascii=False, indent=2) if comfy else "（沒有 ComfyUI JSON 資料）"
+        data = extract_metadata(path).get("comfyui", {}).get("prompt", {})
+        return json.dumps(data, ensure_ascii=False, indent=2) if data else "（沒有 Prompt 資料）"
+
+    def on_workflow_json_view():
+        path = _state["selected_path"]
+        if not path:
+            return "（尚未選擇圖片）"
+        data = extract_metadata(path).get("comfyui", {}).get("workflow", {})
+        return json.dumps(data, ensure_ascii=False, indent=2) if data else "（沒有 Workflow 資料）"
 
     def on_set_cmp_target(slot_name):
         """Return the currently selected image name and path to fill comparison dropdown and icon."""
@@ -736,9 +748,13 @@ def build_app():
                         with gr.Accordion("🤖 提示詞", open=False):
                             detail_prompt = gr.Markdown()
 
-                        with gr.Accordion("📄 原始 JSON", open=False):
-                            json_view_btn = gr.Button("載入 JSON", size="sm", variant="secondary")
-                            json_display = gr.Code(language="json", lines=8)
+                        with gr.Accordion("📝 Prompt JSON", open=False):
+                            prompt_json_btn = gr.Button("🔍 開彈窗檢視 Prompt JSON", size="sm", variant="secondary")
+                            prompt_json_hidden = gr.Textbox(visible=False, label="")
+
+                        with gr.Accordion("🔄 Workflow JSON", open=False):
+                            workflow_json_btn = gr.Button("🔍 開彈窗檢視 Workflow JSON", size="sm", variant="secondary")
+                            workflow_json_hidden = gr.Textbox(visible=False, label="")
 
                     # ── Right: Gallery ────────────
                     with gr.Column(scale=4, elem_classes="main-gallery"):
@@ -897,8 +913,71 @@ def build_app():
             js=js_batch_confirm_delete
         )
 
-        # JSON view button click event
-        json_view_btn.click(on_json_view, inputs=[], outputs=[json_display])
+        _open_json_js = """(json) => {
+            if (!json || json.startsWith('\uff08')) return;
+            var existing = document.getElementById('_json_modal');
+            if (existing) existing.remove();
+            var modal = document.createElement('div');
+            modal.id = '_json_modal';
+            Object.assign(modal.style, {
+                position:'fixed', inset:'0', zIndex:'999999',
+                background:'rgba(0,0,0,0.65)', display:'flex',
+                alignItems:'center', justifyContent:'center'
+            });
+            var box = document.createElement('div');
+            Object.assign(box.style, {
+                background:'#1e1e2e', borderRadius:'12px',
+                width:'80vw', maxWidth:'900px', maxHeight:'80vh',
+                display:'flex', flexDirection:'column',
+                boxShadow:'0 8px 40px rgba(0,0,0,0.6)',
+                overflow:'hidden'
+            });
+            var header = document.createElement('div');
+            Object.assign(header.style, {
+                display:'flex', alignItems:'center', justifyContent:'space-between',
+                padding:'10px 16px', background:'#181825',
+                borderBottom:'1px solid #333', flexShrink:'0'
+            });
+            var title = document.createElement('span');
+            title.textContent = 'JSON';
+            title.style.cssText = 'color:#cdd6f4;font-family:monospace;font-size:14px;font-weight:600';
+            var dlBtn = document.createElement('button');
+            dlBtn.textContent = '⬇️ 下載';
+            dlBtn.style.cssText = 'background:rgba(79,70,229,0.7);border:none;color:#fff;font-size:13px;cursor:pointer;padding:4px 12px;border-radius:8px;margin-left:auto;margin-right:8px';
+            dlBtn.onclick = function(){
+                var b = new Blob([json], {type:'application/json'});
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(b);
+                a.download = 'data.json';
+                a.click();
+            };
+            var closeBtn = document.createElement('button');
+            closeBtn.textContent = '✕';
+            closeBtn.style.cssText = 'background:none;border:none;color:#cdd6f4;font-size:18px;cursor:pointer;padding:2px 8px;border-radius:6px';
+            closeBtn.onclick = function(){ modal.remove(); };
+            header.appendChild(title);
+            header.appendChild(dlBtn);
+            header.appendChild(closeBtn);
+            var pre = document.createElement('pre');
+            Object.assign(pre.style, {
+                margin:'0', padding:'16px', overflowY:'auto',
+                fontSize:'12px', lineHeight:'1.6',
+                fontFamily:'monospace', color:'#cdd6f4',
+                whiteSpace:'pre-wrap', wordBreak:'break-all'
+            });
+            pre.textContent = json;
+            box.appendChild(header);
+            box.appendChild(pre);
+            modal.appendChild(box);
+            modal.onclick = function(e){ if(e.target === modal) modal.remove(); };
+            document.body.appendChild(modal);
+        }"""
+        prompt_json_btn.click(on_prompt_json_view, inputs=[], outputs=[prompt_json_hidden]).then(
+            fn=None, inputs=[prompt_json_hidden], js=_open_json_js
+        )
+        workflow_json_btn.click(on_workflow_json_view, inputs=[], outputs=[workflow_json_hidden]).then(
+            fn=None, inputs=[workflow_json_hidden], js=_open_json_js
+        )
 
         # Triggered from custom Javascript via Button click
         hidden_main_btn.click(
@@ -1031,6 +1110,60 @@ def build_app():
                 }
 
                 var currentPath = getItemPath(img);
+
+                // ── 提示詞面板 ──
+                function getItemPrompt(imgEl) {
+                    var cb = imgEl.closest('.cb-item');
+                    return cb ? (cb.getAttribute('data-prompt') || '') : '';
+                }
+
+                var currentPrompt = getItemPrompt(img);
+                var _promptVisible = false;
+
+                var promptPanel = document.createElement('div');
+                Object.assign(promptPanel.style, {
+                    display: 'none',
+                    position: 'absolute', bottom: '0', left: '0', right: '0',
+                    maxHeight: '40vh', overflowY: 'auto',
+                    background: 'rgba(15,15,25,0.92)',
+                    backdropFilter: 'blur(8px)',
+                    color: '#e2e8f0', fontSize: '13px', lineHeight: '1.7',
+                    fontFamily: 'sans-serif', padding: '16px 20px',
+                    whiteSpace: 'pre-wrap', zIndex: '100010',
+                    borderTop: '1px solid rgba(255,255,255,0.15)'
+                });
+
+                var promptToggleBtn = document.createElement('div');
+                Object.assign(promptToggleBtn.style, {
+                    position: 'absolute', top: '14px', left: '20px',
+                    background: 'rgba(100,100,100,0.5)',
+                    border: '2px solid rgba(255,255,255,0.3)',
+                    borderRadius: '20px', padding: '4px 14px',
+                    color: 'rgba(255,255,255,0.6)', fontSize: '12px',
+                    fontFamily: 'sans-serif', cursor: 'pointer',
+                    userSelect: 'none', zIndex: '100003',
+                    whiteSpace: 'nowrap', transition: 'background 0.2s'
+                });
+                promptToggleBtn.textContent = '📝 提示詞';
+
+                promptToggleBtn.onclick = function(ev) {
+                    ev.stopPropagation();
+                    _promptVisible = !_promptVisible;
+                    if (_promptVisible) {
+                        promptPanel.textContent = currentPrompt || '（此圖片無提示詞資料）';
+                        promptPanel.style.display = 'block';
+                        promptToggleBtn.style.background = 'rgba(79,70,229,0.7)';
+                        promptToggleBtn.style.borderColor = 'rgba(255,255,255,0.6)';
+                        promptToggleBtn.style.color = '#fff';
+                        promptToggleBtn.textContent = '📝 隱藏提示詞';
+                    } else {
+                        promptPanel.style.display = 'none';
+                        promptToggleBtn.style.background = 'rgba(100,100,100,0.5)';
+                        promptToggleBtn.style.borderColor = 'rgba(255,255,255,0.3)';
+                        promptToggleBtn.style.color = 'rgba(255,255,255,0.6)';
+                        promptToggleBtn.textContent = '📝 提示詞';
+                    }
+                };
 
                 function cmpBtnStyle(side) {
                     return {
@@ -1316,12 +1449,17 @@ def build_app():
                 function showImage(idx) {
                     currentIdx = (idx + allItems.length) % allItems.length;
                     currentPath = getItemPath(allItems[currentIdx]);
+                    currentPrompt = getItemPrompt(allItems[currentIdx]);
                     media.style.opacity = '0';
                     setTimeout(function() {
                         media.src = allItems[currentIdx].src.split('?')[0];
                         label.textContent = getCaption(allItems[currentIdx]);
                         media.style.opacity = '1';
                     }, 80);
+                    // 若提示詞面板已開，即時更新內容
+                    if (_promptVisible) {
+                        promptPanel.textContent = currentPrompt || '（此圖片無提示詞資料）';
+                    }
                     // show/hide nav buttons
                     prevBtn.style.display = allItems.length > 1 ? 'block' : 'none';
                     nextBtn.style.display = allItems.length > 1 ? 'block' : 'none';
@@ -1338,6 +1476,8 @@ def build_app():
                 overlay.appendChild(cmpBBtn);
                 overlay.appendChild(cmpContainer);
                 overlay.appendChild(cmpModeBtn);
+                overlay.appendChild(promptToggleBtn);
+                overlay.appendChild(promptPanel);
 
                 // ── Hotkey hint bar (top center, auto-fade) ──
                 var hint = document.createElement('div');
