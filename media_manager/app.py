@@ -745,6 +745,7 @@ def build_app():
                         with gr.Row():
                             select_all_btn = gr.Button("☑️ 全選", size="sm")
                             deselect_all_btn = gr.Button("🔲 全不選", size="sm")
+                            filter_sel_btn = gr.Button("🔍 只看已選", size="sm", elem_id="filter-sel-btn")
                             batch_fav_btn = gr.Button("❤️ 批量收藏", variant="secondary", size="sm")
                             batch_dl_btn = gr.DownloadButton("⬇️ 批量下載", variant="secondary", size="sm")
                             batch_del_btn = gr.Button("🗑️ 批量刪除", variant="stop", size="sm")
@@ -946,6 +947,29 @@ def build_app():
 
         gallery_js = """
         function() {
+            // ── Filter: show only selected ───────────────
+            var _filterActive = false;
+
+            function applyFilter() {
+                document.querySelectorAll('#main-gallery .cb-item').forEach(function(el) {
+                    el.style.display = (_filterActive && !el.classList.contains('selected')) ? 'none' : '';
+                });
+            }
+
+            // Listen for filter button via event delegation
+            document.addEventListener('click', function(e) {
+                var btn = e.target.closest('#filter-sel-btn button, #filter-sel-btn');
+                if (btn) {
+                    _filterActive = !_filterActive;
+                    // Update button label
+                    var span = btn.querySelector('span') || btn;
+                    if (span.textContent.includes('只看已選') || span.textContent.includes('顯示全部')) {
+                        span.textContent = _filterActive ? '🟢 顯示全部' : '🔍 只看已選';
+                    }
+                    applyFilter();
+                }
+            });
+
             // Document-level click listener for selection
             document.addEventListener('click', function(e) {
                 var item = e.target.closest('.cb-item');
@@ -956,6 +980,8 @@ def build_app():
                     
                     // visual feedback immediately
                     item.classList.toggle('selected');
+                    // re-apply filter if active
+                    if (typeof applyFilter === 'function') applyFilter();
                     
                     if (type === 'main') {
                         window._comfy_selected_main = path;
