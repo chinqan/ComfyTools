@@ -725,8 +725,8 @@ def build_app():
 
 
                         with gr.Row():
-                            cmp_a_btn = gr.Button("🔍 比對 A", variant="secondary", size="lg", scale=1, min_width=0)
-                            cmp_b_btn = gr.Button("🔍 比對 B", variant="secondary", size="lg", scale=1, min_width=0)
+                            cmp_a_btn = gr.Button("🔍 比對 A", variant="secondary", size="lg", scale=1, min_width=0, elem_id="cmp-a-btn")
+                            cmp_b_btn = gr.Button("🔍 比對 B", variant="secondary", size="lg", scale=1, min_width=0, elem_id="cmp-b-btn")
                         with gr.Row():
                             selection_count_main = gr.Markdown("已選取: `0`", elem_classes="selection-count")
 
@@ -1016,6 +1016,11 @@ def build_app():
                 var allItems = gallery ? Array.from(gallery.querySelectorAll('.cb-item img.cb-image')) : [img];
                 var currentIdx = allItems.indexOf(img);
 
+                function getItemPath(imgEl) {
+                    var cb = imgEl.closest('.cb-item');
+                    return cb ? cb.getAttribute('data-path') : '';
+                }
+
                 function getCaption(imgEl) {
                     var cb = imgEl.closest('.cb-item');
                     var cap = cb ? cb.querySelector('.cb-caption') : null;
@@ -1025,7 +1030,234 @@ def build_app():
                     return t.textContent || t.innerText;
                 }
 
-                // Build overlay
+                var currentPath = getItemPath(img);
+
+                function cmpBtnStyle(side) {
+                    return {
+                        position: 'absolute',
+                        bottom: '90px',
+                        [side]: '20px',
+                        background: 'rgba(79,70,229,0.75)',
+                        border: '2px solid rgba(255,255,255,0.6)',
+                        borderRadius: '24px',
+                        padding: '6px 14px',
+                        color: '#fff', fontSize: '13px', fontWeight: '600',
+                        fontFamily: 'sans-serif',
+                        cursor: 'pointer', userSelect: 'none',
+                        zIndex: '100002',
+                        transition: 'background 0.2s',
+                        whiteSpace: 'nowrap'
+                    };
+                }
+
+                var cmpABtn = document.createElement('div');
+                cmpABtn.textContent = '🔍 加入比對 A';
+                Object.assign(cmpABtn.style, cmpBtnStyle('left'));
+                cmpABtn.onmouseenter = function() { cmpABtn.style.background = 'rgba(79,70,229,1)'; };
+                cmpABtn.onmouseleave = function() { cmpABtn.style.background = 'rgba(79,70,229,0.75)'; };
+
+                var cmpBBtn = document.createElement('div');
+                cmpBBtn.textContent = '🔍 加入比對 B';
+                Object.assign(cmpBBtn.style, cmpBtnStyle('right'));
+                cmpBBtn.onmouseenter = function() { cmpBBtn.style.background = 'rgba(79,70,229,1)'; };
+                cmpBBtn.onmouseleave = function() { cmpBBtn.style.background = 'rgba(79,70,229,0.75)'; };
+
+                function triggerCmp(cmpElemId) {
+                    if (!currentPath) return;
+                    // 記錄比對A路徑供比對模式使用
+                    if (cmpElemId === '#cmp-a-btn') {
+                        window._comfy_cmp_a_src = currentPath;
+                        updateCmpModeBtn();
+                    }
+                    // 1. Update server state
+                    window._comfy_selected_main = currentPath;
+                    var hiddenBtn = document.querySelector('#hidden-main-btn button, #hidden-main-btn');
+                    if (hiddenBtn && hiddenBtn.tagName !== 'BUTTON') hiddenBtn = hiddenBtn.querySelector('button');
+                    if (hiddenBtn) hiddenBtn.click();
+                    // 2. After state is updated, click the sidebar cmp button
+                    setTimeout(function() {
+                        var cmpBtn = document.querySelector(cmpElemId + ' button, ' + cmpElemId);
+                        if (cmpBtn && cmpBtn.tagName !== 'BUTTON') cmpBtn = cmpBtn.querySelector('button');
+                        if (cmpBtn) cmpBtn.click();
+                    }, 400);
+                }
+
+                cmpABtn.onclick = function(ev) { ev.stopPropagation(); triggerCmp('#cmp-a-btn'); };
+                cmpBBtn.onclick = function(ev) { ev.stopPropagation(); triggerCmp('#cmp-b-btn'); };
+
+                // ── 比對模式按鈕（頂端右邊）──
+                var cmpModeBtn = document.createElement('div');
+                Object.assign(cmpModeBtn.style, {
+                    position: 'absolute', top: '14px', right: '20px',
+                    background: 'rgba(100,100,100,0.5)',
+                    border: '2px solid rgba(255,255,255,0.3)',
+                    borderRadius: '20px', padding: '4px 14px',
+                    color: 'rgba(255,255,255,0.4)', fontSize: '12px',
+                    fontFamily: 'sans-serif', cursor: 'default',
+                    userSelect: 'none', zIndex: '100003',
+                    whiteSpace: 'nowrap', transition: 'background 0.2s'
+                });
+                cmpModeBtn.textContent = '📊 比對模式';
+
+                var _cmpModeActive = false;
+
+                function updateCmpModeBtn() {
+                    var hasA = !!window._comfy_cmp_a_src;
+                    cmpModeBtn.style.cursor = hasA ? 'pointer' : 'default';
+                    cmpModeBtn.style.color = hasA ? '#fff' : 'rgba(255,255,255,0.35)';
+                    cmpModeBtn.style.background = hasA ? 'rgba(79,70,229,0.7)' : 'rgba(100,100,100,0.5)';
+                    cmpModeBtn.style.borderColor = hasA ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.2)';
+                    cmpModeBtn.textContent = _cmpModeActive ? '🖼️ 單圖模式' : '📊 比對模式';
+                }
+                updateCmpModeBtn();
+
+                // ── 並排比對視圖 ──
+                // ── ImageSlider 重疊比對容器 ──
+                var cmpContainer = document.createElement('div');
+                Object.assign(cmpContainer.style, {
+                    display: 'none', position: 'absolute', inset: '0',
+                    overflow: 'hidden', cursor: 'col-resize'
+                });
+
+                // 底層圖：比對A（完整顯示）
+                var sliderImgA = document.createElement('img');
+                Object.assign(sliderImgA.style, {
+                    position: 'absolute', inset: '0',
+                    width: '100%', height: '100%',
+                    objectFit: 'contain',
+                    userSelect: 'none', pointerEvents: 'none'
+                });
+
+                // 上層圖：目前圖（用 clip-path 裁切右半）
+                var sliderImgB = document.createElement('img');
+                Object.assign(sliderImgB.style, {
+                    position: 'absolute', inset: '0',
+                    width: '100%', height: '100%',
+                    objectFit: 'contain',
+                    userSelect: 'none', pointerEvents: 'none',
+                    clipPath: 'inset(0 50% 0 0)'
+                });
+
+                // 分隔線
+                var sliderLine = document.createElement('div');
+                Object.assign(sliderLine.style, {
+                    position: 'absolute', top: '0', bottom: '0',
+                    left: '50%', width: '3px',
+                    background: 'rgba(255,255,255,0.9)',
+                    transform: 'translateX(-50%)',
+                    pointerEvents: 'none', zIndex: '10'
+                });
+
+                // 拖把圓鈕
+                var sliderHandle = document.createElement('div');
+                Object.assign(sliderHandle.style, {
+                    position: 'absolute', top: '50%', left: '50%',
+                    width: '40px', height: '40px',
+                    transform: 'translate(-50%, -50%)',
+                    background: '#fff', borderRadius: '50%',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '16px', cursor: 'col-resize',
+                    userSelect: 'none', zIndex: '11'
+                });
+                sliderHandle.textContent = '◀▶';
+
+                // 標籤：左下（A）右下（目前圖）
+                var sliderLabelA = document.createElement('div');
+                Object.assign(sliderLabelA.style, {
+                    position: 'absolute', bottom: '20px', left: '16px',
+                    background: 'rgba(79,70,229,0.85)', color: '#fff',
+                    padding: '3px 12px', borderRadius: '12px',
+                    fontSize: '12px', fontFamily: 'sans-serif',
+                    pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: '12'
+                });
+
+                var sliderLabelB = document.createElement('div');
+                Object.assign(sliderLabelB.style, {
+                    position: 'absolute', bottom: '20px', right: '16px',
+                    background: 'rgba(0,0,0,0.65)', color: '#fff',
+                    padding: '3px 12px', borderRadius: '12px',
+                    fontSize: '12px', fontFamily: 'sans-serif',
+                    pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: '12'
+                });
+
+                var _dragging = false;
+                var _sliderPct = 50;
+
+                function setSlider(pct) {
+                    _sliderPct = Math.min(95, Math.max(5, pct));
+                    sliderImgB.style.clipPath = 'inset(0 0 0 ' + _sliderPct.toFixed(1) + '%)';
+                    sliderLine.style.left = _sliderPct + '%';
+                    sliderHandle.style.left = _sliderPct + '%';
+                }
+
+                function onDragMove(clientX) {
+                    if (!_dragging || !_cmpModeActive) return;
+                    var rect = cmpContainer.getBoundingClientRect();
+                    setSlider((clientX - rect.left) / rect.width * 100);
+                }
+
+                cmpContainer.addEventListener('mousedown', function(ev) {
+                    _dragging = true; ev.preventDefault();
+                });
+                document.addEventListener('mousemove', function(ev) { onDragMove(ev.clientX); });
+                document.addEventListener('mouseup', function() { _dragging = false; });
+
+                // Touch 支援
+                cmpContainer.addEventListener('touchstart', function(ev) {
+                    _dragging = true; ev.preventDefault();
+                }, { passive: false });
+                document.addEventListener('touchmove', function(ev) {
+                    if (ev.touches[0]) onDragMove(ev.touches[0].clientX);
+                });
+                document.addEventListener('touchend', function() { _dragging = false; });
+
+                cmpContainer.appendChild(sliderImgA);
+                cmpContainer.appendChild(sliderImgB);
+                cmpContainer.appendChild(sliderLine);
+                cmpContainer.appendChild(sliderHandle);
+                cmpContainer.appendChild(sliderLabelA);
+                cmpContainer.appendChild(sliderLabelB);
+
+                function enterCmpMode() {
+                    if (!window._comfy_cmp_a_src) return;
+                    _cmpModeActive = true;
+                    sliderImgA.src = '/gradio_api/file=' + window._comfy_cmp_a_src;
+                    sliderImgB.src = media.src;
+                    sliderLabelA.textContent = '◀ ' + (currentPath ? currentPath.split('/').pop() : '目前圖');
+                    sliderLabelB.textContent = '▶ A: ' + window._comfy_cmp_a_src.split('/').pop();
+                    setSlider(50);  // 初始 50%
+                    cmpContainer.style.display = 'block';
+                    media.style.display = 'none';
+                    label.style.display = 'none';
+                    prevBtn.style.display = 'none';
+                    nextBtn.style.display = 'none';
+                    cmpABtn.style.display = 'none';
+                    cmpBBtn.style.display = 'none';
+                    updateCmpModeBtn();
+                }
+
+                function exitCmpMode() {
+                    _cmpModeActive = false;
+                    cmpContainer.style.display = 'none';
+                    media.style.display = '';
+                    label.style.display = '';
+                    var numItems = allItems.length;
+                    prevBtn.style.display = numItems > 1 ? 'block' : 'none';
+                    nextBtn.style.display = numItems > 1 ? 'block' : 'none';
+                    cmpABtn.style.display = 'block';
+                    cmpBBtn.style.display = 'block';
+                    updateCmpModeBtn();
+                }
+
+                cmpModeBtn.onclick = function(ev) {
+                    ev.stopPropagation();
+                    if (!window._comfy_cmp_a_src) return;
+                    if (_cmpModeActive) exitCmpMode(); else enterCmpMode();
+                };
+
+
+                // Build overlay container
                 var overlay = document.createElement('div');
                 overlay.id = 'custom-fullscreen-overlay';
                 Object.assign(overlay.style, {
@@ -1083,6 +1315,7 @@ def build_app():
 
                 function showImage(idx) {
                     currentIdx = (idx + allItems.length) % allItems.length;
+                    currentPath = getItemPath(allItems[currentIdx]);
                     media.style.opacity = '0';
                     setTimeout(function() {
                         media.src = allItems[currentIdx].src.split('?')[0];
@@ -1101,6 +1334,26 @@ def build_app():
                 overlay.appendChild(label);
                 overlay.appendChild(prevBtn);
                 overlay.appendChild(nextBtn);
+                overlay.appendChild(cmpABtn);
+                overlay.appendChild(cmpBBtn);
+                overlay.appendChild(cmpContainer);
+                overlay.appendChild(cmpModeBtn);
+
+                // ── Hotkey hint bar (top center, auto-fade) ──
+                var hint = document.createElement('div');
+                hint.innerHTML = '⬅ ➡ &nbsp;切換圖片 &nbsp;｜&nbsp; <kbd style="background:rgba(255,255,255,0.2);border-radius:4px;padding:1px 5px">Esc</kbd>&nbsp; 關閉';
+                Object.assign(hint.style, {
+                    position: 'absolute', top: '14px', left: '50%',
+                    transform: 'translateX(-50%)',
+                    color: 'rgba(255,255,255,0.85)',
+                    backgroundColor: 'rgba(0,0,0,0.45)',
+                    backdropFilter: 'blur(4px)',
+                    padding: '5px 18px', borderRadius: '20px',
+                    fontSize: '12px', fontFamily: 'sans-serif',
+                    pointerEvents: 'none', whiteSpace: 'nowrap',
+                    zIndex: '100003'
+                });
+                overlay.appendChild(hint);
 
                 function closeOverlay() {
                     if (document.body.contains(overlay)) document.body.removeChild(overlay);
