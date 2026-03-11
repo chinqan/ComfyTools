@@ -6,6 +6,7 @@ import struct
 import zlib
 from pathlib import Path
 from functools import lru_cache
+from utils.settings import get_setting
 
 try:
     from PIL import Image
@@ -224,83 +225,94 @@ def _fmt_mtime(mtime: float) -> str:
     return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _extract_text_fields(inputs: dict) -> str:
+    """Extract text from inputs dict: text_0, text_1, ... then text/value fallback."""
+    # Collect numbered fields: text_0, text_1, ...
+    numbered = {}
+    for k, v in inputs.items():
+        if isinstance(v, str) and k.startswith("text_") and k[5:].isdigit():
+            numbered[int(k[5:])] = v
+    if numbered:
+        return "\n".join(numbered[i] for i in sorted(numbered) if numbered[i].strip())
+    # Fallback: text / value field
+    for fld in ("text", "value"):
+        v = inputs.get(fld, "")
+        if isinstance(v, str) and len(v.strip()) >= 10:
+            return v.strip()
+    return ""
+
+
 def get_prompt_summary(meta: dict) -> str:
     """Extract text prompts from ComfyUI prompt JSON for display.
 
-    Supports multiple node types:
-      - CLIPTextEncode / CLIPTextEncodeSDXL  → inputs.text
-      - PrimitiveStringMultiline / StringMultiline → inputs.value
-      - ShowText / StringConstant / Note → inputs.text or inputs.value
-      - Any node whose inputs contain a long string (>20 chars)
+    Priority:
+      1. Nodes with _meta.title == "genPrompts" → inputs.text_0, text_1, ...
+      2. CLIPTextEncode / PrimitiveStringMultiline / etc.
+      3. Fallback: any node with long text in inputs
     """
     prompt_data = meta.get("comfyui", {}).get("prompt", {})
     if not prompt_data:
         return ""
 
-    # node class types that carry meaningful text in inputs.text
+    GEN_TITLE = get_setting("prompt_keyword", "genPrompts")
     TEXT_FIELD_CLASSES = {
         "CLIPTextEncode", "CLIPTextEncodeSDXL",
         "CLIPTextEncodeFlux", "CLIPTextEncodeHunyuan",
         "ShowText", "ShowText|pysssss",
         "StringConstant", "StringConstant|pysssss",
-        "Note", "Text", "TextBox",
-        "FluxGuidance",
+        "Note", "Text", "TextBox", "FluxGuidance",
     }
-    # node class types that carry text in inputs.value
     VALUE_FIELD_CLASSES = {
         "PrimitiveStringMultiline", "StringMultiline",
         "Primitive", "CM_StringUnaryOperation",
         "String Literal", "StringLiteral",
     }
+    MIN_LEN = 10
 
-    MIN_TEXT_LEN = 10  # only collect strings longer than this
-
-    collected: list[tuple[str, str, str]] = []  # (node_id, class_type, text)
+    gen_parts, other_parts = [], []
 
     for node_id, node in prompt_data.items():
         if not isinstance(node, dict):
             continue
         inputs = node.get("inputs", {})
-        class_type = node.get("class_type", "")
-        title = node.get("_meta", {}).get("title", class_type)
+        cls = node.get("class_type", "")
+        title = node.get("_meta", {}).get("title", cls)
 
-        text = None
-        if class_type in TEXT_FIELD_CLASSES:
+        if title == GEN_TITLE:
+            text = _extract_text_fields(inputs)
+            if text and len(text.strip()) >= MIN_LEN:
+                gen_parts.append(f"**[{node_id}] {title}**\n\n{text.strip()}")
+            continue
+
+        # Other known classes
+        if cls in TEXT_FIELD_CLASSES:
             text = inputs.get("text", "")
-        elif class_type in VALUE_FIELD_CLASSES:
+        elif cls in VALUE_FIELD_CLASSES:
             text = inputs.get("value", "")
         else:
-            # Fallback: check both fields for any node with meaningful text
-            for field in ("text", "value", "prompt"):
-                v = inputs.get(field, "")
-                if isinstance(v, str) and len(v) >= MIN_TEXT_LEN:
+            text = ""
+            for fld in ("text", "value", "prompt"):
+                v = inputs.get(fld, "")
+                if isinstance(v, str) and len(v) >= MIN_LEN:
                     text = v
                     break
 
-        if text and isinstance(text, str) and len(text.strip()) >= MIN_TEXT_LEN:
-            # Skip if it looks like a node reference list (list type)
-            collected.append((node_id, title or class_type, text.strip()))
+        if text and isinstance(text, str) and len(text.strip()) >= MIN_LEN:
+            other_parts.append(f"**[{node_id}] {title}**\n\n{text.strip()}")
 
-    if not collected:
-        return ""
-
-    parts = []
-    for node_id, label, text in collected:
-        header = f"**[{node_id}] {label}**"
-        parts.append(f"{header}\n\n{text}")
-
-    return "\n\n---\n\n".join(parts)
+    combined = gen_parts if gen_parts else other_parts
+    return "\n\n---\n\n".join(combined) if combined else ""
 
 
 @lru_cache(maxsize=512)
 def get_prompt_text_quick(file_path: str) -> str:
-    """Fast extraction of prompt text from PNG for use in gallery data-prompt attribute.
-    Results are cached by file path string. Returns plain text (no markdown)."""
+    """Fast extraction of prompt text from PNG for overlay data-prompt attribute.
+    Priority: nodes with _meta.title=='genPrompts' (text_0, text_1, ...),
+    then PrimitiveStringMultiline/CLIPTextEncode fallback."""
     p = Path(file_path)
     if not p.exists() or p.suffix.lower() != ".png":
         return ""
     try:
-        # Quick read: only parse PNG tEXt/iTXt chunks for 'prompt'
         with open(file_path, "rb") as f:
             if f.read(8) != b"\x89PNG\r\n\x1a\n":
                 return ""
@@ -330,14 +342,21 @@ def get_prompt_text_quick(file_path: str) -> str:
                         sep3 = rest.index(b"\x00")
                         raw = rest[sep3 + 1:].decode("utf-8", errors="replace")
                     prompt_data = json.loads(raw)
-                    texts = []
+                    GEN_TITLE = get_setting("prompt_keyword", "genPrompts")
                     VALUE_CLS = {"PrimitiveStringMultiline", "StringMultiline", "Primitive"}
+                    gen_texts, other_texts = [], []
                     for node in prompt_data.values():
                         if not isinstance(node, dict):
                             continue
                         inp = node.get("inputs", {})
                         cls = node.get("class_type", "")
                         title = node.get("_meta", {}).get("title", cls)
+                        if title == GEN_TITLE:
+                            text = _extract_text_fields(inp)
+                            if text and len(text.strip()) >= 10:
+                                gen_texts.append(text.strip())
+                            continue
+                        # fallback fields
                         text = inp.get("value", "") if cls in VALUE_CLS else inp.get("text", "")
                         if not text:
                             for fld in ("text", "value"):
@@ -346,8 +365,9 @@ def get_prompt_text_quick(file_path: str) -> str:
                                     text = v
                                     break
                         if text and isinstance(text, str) and len(text.strip()) >= 10:
-                            texts.append(f"[{title}]\n{text.strip()}")
-                    return "\n\n---\n\n".join(texts)
+                            other_texts.append(f"[{title}]\n{text.strip()}")
+                    chosen = gen_texts if gen_texts else other_texts
+                    return "\n\n---\n\n".join(chosen)
                 except Exception:
                     continue
     except Exception:

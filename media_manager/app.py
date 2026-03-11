@@ -20,6 +20,7 @@ import gradio as gr
 from utils.file_scanner import scan_folder
 from utils.favorites import load_favorites, toggle_favorite, is_favorite, save_favorites
 from utils.metadata import extract_metadata, get_prompt_summary, get_prompt_text_quick
+from utils.settings import load_settings, save_settings
 
 
 # ──────────────────────────────────────────────
@@ -780,6 +781,8 @@ def build_app():
                         fav_detail_image = gr.Image(show_label=False, height=300, interactive=False)
                         fav_detail_video = gr.Video(show_label=False, height=300, visible=False)
                         with gr.Row():
+                            selection_count_fav = gr.Markdown("已選取: `0`", elem_classes="selection-count")
+                        with gr.Row():
                             fav_fav_btn = gr.Button("❤️ 取消收藏", variant="secondary", size="sm")
                             fav_dl_btn = gr.DownloadButton("⬇️ 下載", variant="secondary", size="sm")
                         with gr.Accordion("📋 元資料", open=True):
@@ -793,7 +796,6 @@ def build_app():
                             fav_deselect_all_btn = gr.Button("🔲 全不選", size="sm")
                             fav_batch_dl_btn = gr.DownloadButton("⬇️ 批量下載", variant="secondary", size="sm")
                             fav_batch_remove_btn = gr.Button("🗑️ 批量取消收藏", variant="stop", size="sm")
-                            selection_count_fav = gr.Markdown("已選取: `0`", elem_classes="selection-count")
 
                         fav_gallery = gr.HTML(elem_id="fav-gallery")
                         hidden_fav_btn = gr.Button(elem_id="hidden-fav-btn", elem_classes="hidden-btn")
@@ -825,10 +827,47 @@ def build_app():
                             elem_id="cmp-slider"
                         )
 
+            # ═══════════════════════════════════════
+            # Tab 4: Settings
+            # ═══════════════════════════════════════
+            with gr.Tab("⚙️ 設定"):
+                with gr.Column(scale=1, min_width=400):
+                    gr.Markdown("## ⚙️ 工具設定")
+                    gr.Markdown("---")
+
+                    gr.Markdown("### 🔍 提示詞提取關鍵字")
+                    gr.Markdown(
+                        "ComfyUI workflow 中，符合此 `_meta.title` 的節點文字將被優先顯示為提示詞。\n\n"
+                        "例如：節點 `ShowText|pysssss` 若 title 設為 `genPrompts`，其 `text_0` 欄位即為提示詞。"
+                    )
+                    prompt_keyword_input = gr.Textbox(
+                        label="提示詞節點關鍵字",
+                        value=load_settings().get("prompt_keyword", "genPrompts"),
+                        placeholder="genPrompts",
+                        max_lines=1,
+                        info="大小寫敏感，需與 ComfyUI 節點的 title 完全一致"
+                    )
+                    save_settings_btn = gr.Button("💾 儲存設定", variant="primary", size="lg")
+                    settings_status = gr.Markdown("")
+
         # ── Events ──────────────────────────────────
 
         # Gallery → detail outputs needed for refresh reset
         _do = [detail_meta, detail_prompt, detail_image, detail_video, title_txt]
+
+        # Settings save
+        def on_save_settings(keyword: str):
+            from utils.metadata import get_prompt_text_quick
+            kw = keyword.strip() or "genPrompts"
+            save_settings({"prompt_keyword": kw})
+            get_prompt_text_quick.cache_clear()  # invalidate lru_cache
+            return f"✅ 已儲存！關鍵字設為：`{kw}`"
+
+        save_settings_btn.click(
+            on_save_settings,
+            inputs=[prompt_keyword_input],
+            outputs=[settings_status]
+        )
 
         # Refresh
         _ri = [folder_input, filter_radio, search_box]
@@ -1026,6 +1065,25 @@ def build_app():
 
         gallery_js = """
         function() {
+            // ── Build global path→prompt map ──────────────
+            window._comfy_prompt_map = {};
+            function rebuildPromptMap() {
+                window._comfy_prompt_map = {};
+                document.querySelectorAll('.cb-item[data-prompt]').forEach(function(el) {
+                    var p = el.getAttribute('data-path');
+                    var pt = el.getAttribute('data-prompt');
+                    if (p && pt) window._comfy_prompt_map[p] = pt;
+                });
+            }
+            rebuildPromptMap();
+            var _galleryEl = document.querySelector('#main-gallery');
+            if (_galleryEl) {
+                new MutationObserver(function(muts) {
+                    if (muts.some(function(m){ return m.addedNodes.length > 0; }))
+                        rebuildPromptMap();
+                }).observe(_galleryEl, {childList: true, subtree: true});
+            }
+
             // ── Filter: show only selected ───────────────
             var _filterActive = false;
 
@@ -1089,6 +1147,8 @@ def build_app():
                 if (!img) return; // skip video placeholders
 
                 e.preventDefault();
+                // Rebuild prompt map to ensure latest data-prompt values
+                if (typeof rebuildPromptMap === "function") rebuildPromptMap();
 
                 // Collect all image items from the same gallery container
                 var gallery = item.closest('.cb-wrap');
@@ -1114,7 +1174,8 @@ def build_app():
                 // ── 提示詞面板 ──
                 function getItemPrompt(imgEl) {
                     var cb = imgEl.closest('.cb-item');
-                    return cb ? (cb.getAttribute('data-prompt') || '') : '';
+                    var path = cb ? cb.getAttribute('data-path') : '';
+                    return (path && window._comfy_prompt_map && window._comfy_prompt_map[path]) || '';
                 }
 
                 var currentPrompt = getItemPrompt(img);
@@ -1123,14 +1184,15 @@ def build_app():
                 var promptPanel = document.createElement('div');
                 Object.assign(promptPanel.style, {
                     display: 'none',
-                    position: 'absolute', bottom: '0', left: '0', right: '0',
-                    maxHeight: '40vh', overflowY: 'auto',
-                    background: 'rgba(15,15,25,0.92)',
-                    backdropFilter: 'blur(8px)',
-                    color: '#e2e8f0', fontSize: '13px', lineHeight: '1.7',
-                    fontFamily: 'sans-serif', padding: '16px 20px',
+                    position: 'absolute', top: '0', left: '0', bottom: '0',
+                    width: '300px', maxWidth: '38vw',
+                    overflowY: 'auto',
+                    background: 'linear-gradient(to right, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0) 100%)',
+                    color: '#fff', fontSize: '13px', lineHeight: '1.8',
+                    fontFamily: 'sans-serif', padding: '70px 32px 24px 20px',
                     whiteSpace: 'pre-wrap', zIndex: '100010',
-                    borderTop: '1px solid rgba(255,255,255,0.15)'
+                    textShadow: '0 1px 3px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.7)',
+                    pointerEvents: 'none'
                 });
 
                 var promptToggleBtn = document.createElement('div');
