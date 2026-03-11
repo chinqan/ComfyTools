@@ -45,10 +45,10 @@ def extract_metadata(file_path: str) -> dict:
 
     stat = p.stat()
     result["basic"] = {
-        "檔名 Filename": p.name,
-        "路徑 Path": str(p),
-        "大小 Size": _fmt_size(stat.st_size),
-        "修改日期 Modified": _fmt_mtime(stat.st_mtime),
+        "Filename": p.name,
+        "Path": str(p),
+        "Size": _fmt_size(stat.st_size),
+        "Modified": _fmt_mtime(stat.st_mtime),
     }
 
     ext = p.suffix.lower()
@@ -63,7 +63,7 @@ def extract_metadata(file_path: str) -> dict:
         try:
             with Image.open(file_path) as img:
                 w, h = img.size
-                result["basic"]["尺寸 Dimensions"] = f"{w} × {h} px"
+                result["basic"]["Dimensions"] = f"{w} × {h} px"
         except Exception:
             pass
 
@@ -185,12 +185,12 @@ def _extract_exif(file_path: str, result: dict):
 
 def _build_summary(result: dict) -> str:
     """Build basic info summary only (no ComfyUI metadata / EXIF)."""
-    lines = []
-    if result["basic"]:
-        lines.append("### 📋 基本資訊 Basic Info")
-        for k, v in result["basic"].items():
-            lines.append(f"**{k}:** {v}")
-    return "\n".join(lines) if lines else ">無基本資訊"
+    if not result["basic"]:
+        return "無基本資訊"
+    lines = ["**基本資訊**", ""]
+    for k, v in result["basic"].items():
+        lines.append(f"{k}: {v}  ")
+    return "\n".join(lines)
 
 
 def _fmt_size(size: int) -> str:

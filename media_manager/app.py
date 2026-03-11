@@ -1563,9 +1563,13 @@ def build_app():
                 document.addEventListener('keydown', keyHandler);
 
                 overlay.onclick = function(ev) {
-                    // close only if clicking the backdrop (not buttons)
-                    if (ev.target === overlay || ev.target === media) closeOverlay();
+                    // Click on backdrop no longer closes overlay
                 };
+
+                // Prevent scroll from leaking to background page
+                overlay.addEventListener('wheel', function(ev) {
+                    ev.preventDefault();
+                }, { passive: false });
 
                 document.body.appendChild(overlay);
                 showImage(currentIdx);
