@@ -184,32 +184,13 @@ def _extract_exif(file_path: str, result: dict):
 
 
 def _build_summary(result: dict) -> str:
+    """Build basic info summary only (no ComfyUI metadata / EXIF)."""
     lines = []
-
     if result["basic"]:
         lines.append("### 📋 基本資訊 Basic Info")
         for k, v in result["basic"].items():
             lines.append(f"**{k}:** {v}")
-
-    if result["comfyui"]:
-        lines.append("\n### 🤖 ComfyUI 元資料 Metadata")
-        for k, v in result["comfyui"].items():
-            if k in ("workflow", "prompt"):
-                # Summarize, don't dump entire JSON
-                if isinstance(v, dict):
-                    count = len(v)
-                    lines.append(f"**{k}:** {count} nodes (點擊「原始 JSON」查看完整內容)")
-                else:
-                    lines.append(f"**{k}:** {str(v)[:200]}")
-            else:
-                lines.append(f"**{k}:** {str(v)[:500]}")
-
-    if result["exif"]:
-        lines.append("\n### 📷 EXIF 資訊")
-        for k, v in result["exif"].items():
-            lines.append(f"**{k}:** {v[:500]}")
-
-    return "\n".join(lines) if lines else "（無元資料）"
+    return "\n".join(lines) if lines else ">無基本資訊"
 
 
 def _fmt_size(size: int) -> str:
@@ -223,6 +204,25 @@ def _fmt_size(size: int) -> str:
 def _fmt_mtime(mtime: float) -> str:
     from datetime import datetime
     return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_comment_text(meta: dict) -> str:
+    """Extract prompt/comment text from PNG metadata comment field.
+    Reads meta['comfyui']['comment'] or similar keys.
+    Falls back to exif ImageDescription / UserComment."""
+    comfyui = meta.get("comfyui", {})
+    # Try common comment-related keys (case insensitive search)
+    for key in comfyui:
+        if key.lower() in ("comment", "description", "parameters", "caption"):
+            val = comfyui[key]
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    # EXIF fallback
+    exif = meta.get("exif", {})
+    for key in ("UserComment", "ImageDescription"):
+        if exif.get(key, "").strip():
+            return exif[key].strip()
+    return ""
 
 
 def _extract_text_fields(inputs: dict) -> str:
@@ -306,9 +306,8 @@ def get_prompt_summary(meta: dict) -> str:
 
 @lru_cache(maxsize=512)
 def get_prompt_text_quick(file_path: str) -> str:
-    """Fast extraction of prompt text from PNG for overlay data-prompt attribute.
-    Priority: nodes with _meta.title=='genPrompts' (text_0, text_1, ...),
-    then PrimitiveStringMultiline/CLIPTextEncode fallback."""
+    """Fast extraction of 'comment' text from PNG for overlay display.
+    Reads the first tEXt/iTXt chunk with key matching comment/description/parameters."""
     p = Path(file_path)
     if not p.exists() or p.suffix.lower() != ".png":
         return ""
@@ -330,8 +329,8 @@ def get_prompt_text_quick(file_path: str) -> str:
                     continue
                 try:
                     sep = data.index(b"\x00")
-                    key = data[:sep].decode("latin-1")
-                    if key.lower() != "prompt":
+                    key = data[:sep].decode("latin-1").lower()
+                    if key not in ("comment", "description", "parameters", "caption"):
                         continue
                     if chunk_type == "tEXt":
                         raw = data[sep + 1:].decode("latin-1", errors="replace")
@@ -341,33 +340,8 @@ def get_prompt_text_quick(file_path: str) -> str:
                         rest = rest[sep2 + 1:]
                         sep3 = rest.index(b"\x00")
                         raw = rest[sep3 + 1:].decode("utf-8", errors="replace")
-                    prompt_data = json.loads(raw)
-                    GEN_TITLE = get_setting("prompt_keyword", "genPrompts")
-                    VALUE_CLS = {"PrimitiveStringMultiline", "StringMultiline", "Primitive"}
-                    gen_texts, other_texts = [], []
-                    for node in prompt_data.values():
-                        if not isinstance(node, dict):
-                            continue
-                        inp = node.get("inputs", {})
-                        cls = node.get("class_type", "")
-                        title = node.get("_meta", {}).get("title", cls)
-                        if title == GEN_TITLE:
-                            text = _extract_text_fields(inp)
-                            if text and len(text.strip()) >= 10:
-                                gen_texts.append(text.strip())
-                            continue
-                        # fallback fields
-                        text = inp.get("value", "") if cls in VALUE_CLS else inp.get("text", "")
-                        if not text:
-                            for fld in ("text", "value"):
-                                v = inp.get(fld, "")
-                                if isinstance(v, str) and len(v) >= 10:
-                                    text = v
-                                    break
-                        if text and isinstance(text, str) and len(text.strip()) >= 10:
-                            other_texts.append(f"[{title}]\n{text.strip()}")
-                    chosen = gen_texts if gen_texts else other_texts
-                    return "\n\n---\n\n".join(chosen)
+                    if raw.strip():
+                        return raw.strip()
                 except Exception:
                     continue
     except Exception:

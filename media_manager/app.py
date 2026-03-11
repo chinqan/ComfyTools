@@ -19,7 +19,7 @@ import gradio as gr
 
 from utils.file_scanner import scan_folder
 from utils.favorites import load_favorites, toggle_favorite, is_favorite, save_favorites
-from utils.metadata import extract_metadata, get_prompt_summary, get_prompt_text_quick
+from utils.metadata import extract_metadata, get_comment_text, get_prompt_text_quick
 from utils.settings import load_settings, save_settings
 
 
@@ -485,12 +485,12 @@ def build_app():
             return "", "", gr.update(value=None, visible=False), gr.update(value=None, visible=False), "#### 🔎 詳情"
         meta = extract_metadata(path)
         summary = meta["raw_text"]
-        prompt_text = get_prompt_summary(meta)
+        comment = get_comment_text(meta)
         ext = Path(path).suffix.lower()
         is_video = ext in {".mp4", ".webm", ".mov", ".avi"}
         return (
             summary,
-            prompt_text,
+            comment,
             gr.update(value=None if is_video else path, visible=not is_video),
             gr.update(value=path if is_video else None, visible=is_video),
             gr.update(value="#### 🔎 影片詳情" if is_video else "#### 🔎 圖片詳情")
@@ -746,12 +746,8 @@ def build_app():
                         with gr.Accordion("📋 元資料", open=True):
                             detail_meta = gr.Markdown(elem_classes="meta-panel")
 
-                        with gr.Accordion("🤖 提示詞", open=False):
+                        with gr.Accordion("🤖 提示詞", open=True):
                             detail_prompt = gr.Markdown()
-
-                        with gr.Accordion("📝 Prompt JSON", open=False):
-                            prompt_json_btn = gr.Button("🔍 開彈窗檢視 Prompt JSON", size="sm", variant="secondary")
-                            prompt_json_hidden = gr.Textbox(visible=False, label="")
 
                         with gr.Accordion("🔄 Workflow JSON", open=False):
                             workflow_json_btn = gr.Button("🔍 開彈窗檢視 Workflow JSON", size="sm", variant="secondary")
@@ -1011,9 +1007,6 @@ def build_app():
             modal.onclick = function(e){ if(e.target === modal) modal.remove(); };
             document.body.appendChild(modal);
         }"""
-        prompt_json_btn.click(on_prompt_json_view, inputs=[], outputs=[prompt_json_hidden]).then(
-            fn=None, inputs=[prompt_json_hidden], js=_open_json_js
-        )
         workflow_json_btn.click(on_workflow_json_view, inputs=[], outputs=[workflow_json_hidden]).then(
             fn=None, inputs=[workflow_json_hidden], js=_open_json_js
         )
