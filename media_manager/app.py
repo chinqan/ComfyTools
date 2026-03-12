@@ -1412,14 +1412,24 @@ def build_app():
                     _cmpModeActive = true;
                     sliderImgA.src = '/gradio_api/file=' + window._comfy_cmp_a_src;
                     sliderImgB.src = media.src;
-                    sliderLabelA.textContent = '◀ ' + (currentPath ? currentPath.split('/').pop() : '目前圖');
-                    sliderLabelB.textContent = '▶ A: ' + window._comfy_cmp_a_src.split('/').pop();
+                    sliderLabelA.textContent = '◀ A: ' + window._comfy_cmp_a_src.split('/').pop();
+                    sliderLabelB.textContent = '▶ ' + (currentPath ? currentPath.split('/').pop() : '目前圖');
                     setSlider(50);  // 初始 50%
                     cmpContainer.style.display = 'block';
                     media.style.display = 'none';
                     label.style.display = 'none';
-                    prevBtn.style.display = 'none';
-                    nextBtn.style.display = 'none';
+                    // 比對模式中仍顯示切換按鈕（縮小置於底部），但隱藏「加入比對」按鈕
+                    if (allItems.length > 1) {
+                        prevBtn.style.display = 'block';
+                        nextBtn.style.display = 'block';
+                        // 移到底部，避免遮擋比對線
+                        prevBtn.style.top = 'auto';
+                        prevBtn.style.bottom = '60px';
+                        nextBtn.style.top = 'auto';
+                        nextBtn.style.bottom = '60px';
+                        prevBtn.style.transform = 'none';
+                        nextBtn.style.transform = 'none';
+                    }
                     cmpABtn.style.display = 'none';
                     cmpBBtn.style.display = 'none';
                     updateCmpModeBtn();
@@ -1433,6 +1443,13 @@ def build_app():
                     var numItems = allItems.length;
                     prevBtn.style.display = numItems > 1 ? 'block' : 'none';
                     nextBtn.style.display = numItems > 1 ? 'block' : 'none';
+                    // 還原切換按鈕到中間位置
+                    prevBtn.style.top = '50%';
+                    prevBtn.style.bottom = 'auto';
+                    nextBtn.style.top = '50%';
+                    nextBtn.style.bottom = 'auto';
+                    prevBtn.style.transform = 'translateY(-50%)';
+                    nextBtn.style.transform = 'translateY(-50%)';
                     cmpABtn.style.display = 'block';
                     cmpBBtn.style.display = 'block';
                     updateCmpModeBtn();
@@ -1505,12 +1522,22 @@ def build_app():
                     currentIdx = (idx + allItems.length) % allItems.length;
                     currentPath = getItemPath(allItems[currentIdx]);
                     currentPrompt = getItemPrompt(allItems[currentIdx]);
-                    media.style.opacity = '0';
-                    setTimeout(function() {
-                        media.src = allItems[currentIdx].src.split('?')[0];
+                    var newSrc = allItems[currentIdx].src.split('?')[0];
+                    if (_cmpModeActive) {
+                        // 比對模式：更新 B 圖（目前圖）
+                        sliderImgB.src = newSrc;
+                        sliderLabelB.textContent = '▶ ' + (currentPath ? currentPath.split('/').pop() : '');
+                        // 更新 media.src 以供退出比對模式時使用
+                        media.src = newSrc;
                         label.textContent = getCaption(allItems[currentIdx]);
-                        media.style.opacity = '1';
-                    }, 80);
+                    } else {
+                        media.style.opacity = '0';
+                        setTimeout(function() {
+                            media.src = newSrc;
+                            label.textContent = getCaption(allItems[currentIdx]);
+                            media.style.opacity = '1';
+                        }, 80);
+                    }
                     // 若提示詞面板已開，即時更新內容
                     if (_promptVisible) {
                         promptPanel.textContent = currentPrompt || '（此圖片無提示詞資料）';
