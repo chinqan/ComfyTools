@@ -505,10 +505,12 @@ def build_app():
             _state["selected_path"] = clicked_path
         
         detail_updates = _detail_view(_state["selected_path"])
-        count_str = f"**已選取: {len(_state['selected_batch'])} 張**"
+        n = len(_state["selected_batch"])
+        count_str = f"**已選取: {n} 張**"
+        dl_label = gr.update(label=_dl_btn_label(n))
         
-        # We don't output the gallery HTML anymore, just the detail updates and the count
-        return detail_updates + (count_str,)
+        # We don't output the gallery HTML anymore, just the detail updates, count and dl btn label
+        return detail_updates + (count_str, dl_label)
 
     def on_fav_toggle():
         path = _state["selected_path"]
@@ -551,8 +553,10 @@ def build_app():
         # Insert fav_fav_btn label update at index 2 to match _fo order
         meta, prompt_val, img_up, vid_up, title_up = detail_updates
         fav_label = "❤️ 取消收藏" if is_favorite(_state["selected_path"]) else "🤍 改為收藏"
-        count_str = f"**已選取: {len(_state['fav_selected_batch'])} 張**"
-        return (meta, prompt_val, fav_label, img_up, vid_up, title_up, count_str)
+        n = len(_state["fav_selected_batch"])
+        count_str = f"**已選取: {n} 張**"
+        dl_label = gr.update(label=_dl_btn_label(n))
+        return (meta, prompt_val, fav_label, img_up, vid_up, title_up, count_str, dl_label)
 
     def on_compare(name_a, name_b):
         if not name_a or not name_b:
@@ -564,11 +568,20 @@ def build_app():
         # Return tuple for gr.ImageSlider
         return (pa, pb) if pa and pb else None, meta_a, meta_b
 
+    def _dl_btn_label(count, prefix="下載"):
+        if count == 0:
+            return f"⬇️ 批量{prefix}"
+        return f"⬇️ 批量{prefix}({count})"
+
     def on_batch_download_main():
-        return on_batch_download(list(_state["selected_batch"]))
+        paths = list(_state["selected_batch"])
+        result = on_batch_download(paths)
+        return gr.update(value=result, label=_dl_btn_label(len(paths)))
         
     def on_batch_download_fav():
-        return on_batch_download(list(_state["fav_selected_batch"]))
+        paths = list(_state["fav_selected_batch"])
+        result = on_batch_download(paths)
+        return gr.update(value=result, label=_dl_btn_label(len(paths)))
 
     def on_batch_fav_main():
         """批量將已選圖片加入收藏後重渲染 gallery"""
@@ -588,9 +601,13 @@ def build_app():
     def on_batch_download(selected_paths):
         if not selected_paths:
             return None
+        from pathlib import Path
+        # 單張直接下載，不打包 zip
+        if len(selected_paths) == 1:
+            p = Path(selected_paths[0])
+            return str(p) if p.exists() else None
         import tempfile
         import zipfile
-        from pathlib import Path
         temp_dir = tempfile.gettempdir()
         zip_path = Path(temp_dir) / "comfyui_batch_download.zip"
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -644,20 +661,22 @@ def build_app():
 
     def on_select_all_main():
         _state["selected_batch"] = {f["path"] for f in _state["files"]}
-        return f"**已選取: {len(_state['selected_batch'])} 張**"
+        n = len(_state["selected_batch"])
+        return f"**已選取: {n} 張**", gr.update(label=_dl_btn_label(n))
         
     def on_deselect_all_main():
         _state["selected_batch"] = set()
-        return f"**已選取: {len(_state['selected_batch'])} 張**"
+        return f"**已選取: 0 張**", gr.update(label=_dl_btn_label(0))
 
     def on_select_all_fav():
         fav_files = _get_all_favorites()
         _state["fav_selected_batch"] = {f["path"] for f in fav_files}
-        return f"**已選取: {len(_state['fav_selected_batch'])} 張**"
+        n = len(_state["fav_selected_batch"])
+        return f"**已選取: {n} 張**", gr.update(label=_dl_btn_label(n))
         
     def on_deselect_all_fav():
         _state["fav_selected_batch"] = set()
-        return f"**已選取: {len(_state['fav_selected_batch'])} 張**"
+        return f"**已選取: 0 張**", gr.update(label=_dl_btn_label(0))
 
     def on_prompt_json_view():
         path = _state["selected_path"]
@@ -743,11 +762,11 @@ def build_app():
                         with gr.Row():
                             selection_count_main = gr.Markdown("已選取: `0`", elem_classes="selection-count")
 
-                        with gr.Accordion("📋 元資料", open=True):
-                            detail_meta = gr.Markdown(elem_classes="meta-panel")
-
                         with gr.Accordion("🤖 提示詞", open=True):
                             detail_prompt = gr.Markdown()
+                            
+                        with gr.Accordion("📋 元資料", open=True):
+                            detail_meta = gr.Markdown(elem_classes="meta-panel")
 
                         with gr.Accordion("🔄 Workflow JSON", open=False):
                             workflow_json_btn = gr.Button("🔍 開彈窗檢視 Workflow JSON", size="sm", variant="secondary")
@@ -931,12 +950,12 @@ def build_app():
 
         select_all_btn.click(
             on_select_all_main, 
-            outputs=[selection_count_main],
+            outputs=[selection_count_main, batch_dl_btn],
             js="() => { document.querySelectorAll('#main-gallery .cb-item').forEach(el => el.classList.add('selected')); return undefined; }"
         )
         deselect_all_btn.click(
             on_deselect_all_main, 
-            outputs=[selection_count_main],
+            outputs=[selection_count_main, batch_dl_btn],
             js="() => { document.querySelectorAll('#main-gallery .cb-item').forEach(el => el.classList.remove('selected')); return undefined; }"
         )
         batch_fav_btn.click(on_batch_fav_main, outputs=[gallery])
@@ -1015,7 +1034,7 @@ def build_app():
         hidden_main_btn.click(
             on_main_click, 
             inputs=[folder_input], # Dummy input required for python parameter mapping
-            outputs=_do + [selection_count_main],
+            outputs=_do + [selection_count_main, batch_dl_btn],
             js="(dummy) => { return window._comfy_selected_main || ''; }"
         )
 
@@ -1033,12 +1052,12 @@ def build_app():
 
         fav_select_all_btn.click(
             on_select_all_fav, 
-            outputs=[selection_count_fav],
+            outputs=[selection_count_fav, fav_batch_dl_btn],
             js="() => { document.querySelectorAll('#fav-gallery .cb-item').forEach(el => el.classList.add('selected')); return undefined; }"
         )
         fav_deselect_all_btn.click(
             on_deselect_all_fav, 
-            outputs=[selection_count_fav],
+            outputs=[selection_count_fav, fav_batch_dl_btn],
             js="() => { document.querySelectorAll('#fav-gallery .cb-item').forEach(el => el.classList.remove('selected')); return undefined; }"
         )
         fav_batch_dl_btn.click(on_batch_download_fav, outputs=[fav_batch_dl_btn])
@@ -1048,7 +1067,7 @@ def build_app():
         hidden_fav_btn.click(
             on_fav_click, 
             inputs=[folder_input], # Dummy input required for python parameter mapping
-            outputs=_fo + [selection_count_fav],
+            outputs=_fo + [selection_count_fav, fav_batch_dl_btn],
             js="(dummy) => { return window._comfy_selected_fav || ''; }"
         )
 
